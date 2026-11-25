@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="内閣府が発表する日本の祝日・休日データを年別に閲覧し、JSON形式で取得できます。">
+  <title>Japan Holiday Data | 日本の祝日データ</title>
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#holidays">祝日一覧へ移動</a>
+  <header class="bar">
+    <div class="wrap bar-inner">
+      <a class="wordmark" href="./" lang="en"><i class="calendar-mark" aria-hidden="true"></i>Japan Holiday Data</a>
+      <nav aria-label="ページ内">
+        <a href="#holidays">祝日一覧</a><a href="#distribution">配信情報</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <header class="intro">
+      <h1>日本の祝日データ</h1>
+      <p>内閣府が発表する国民の祝日・休日を、年別の一覧とJSONで配信しています。</p>
+    </header>
+    <dl class="metrics" aria-label="配信状況">
+      <div><dt>収録期間</dt><dd id="period">—</dd></div>
+      <div><dt>全収録件数</dt><dd id="count">—</dd></div>
+      <div><dt>公式データの最終確認 <span>（日本時間）</span></dt><dd id="checked">—</dd></div>
+    </dl>
+    <noscript><p>配信情報と祝日一覧の表示にはJavaScriptが必要です。<a href="manifest.json">manifest.json</a> から収録年を確認できます。</p></noscript>
+    <p id="stale" class="notice" hidden>最終確認から14日を超えています。最新の祝日は<a href="https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html" target="_blank" rel="noopener noreferrer">内閣府ホームページ（別ウィンドウ）</a>をご確認ください。</p>
+
+    <div class="layout">
+      <section id="holidays" aria-labelledby="list-title">
+        <div class="section-heading">
+          <h2 id="list-title">祝日一覧</h2>
+          <div class="year-control"><label for="year">表示年</label>
+            <select id="year" disabled><option>取得中</option></select>
+          </div>
+        </div>
+        <p id="list-status" role="status" aria-live="polite">データを読み込んでいます。</p>
+        <button type="button" id="retry" hidden>再読み込み</button>
+        <table id="list" hidden>
+          <caption id="caption" class="sr-only">選択年の祝日・休日</caption>
+          <thead><tr><th scope="col">日付</th><th scope="col">曜日</th><th scope="col">祝日・休日名称</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <a id="download" class="download-link" hidden download>選択年のJSONをダウンロード</a>
+      </section>
+
+      <aside id="distribution" aria-labelledby="details-title">
+        <h2 id="details-title">配信情報</h2>
+        <dl class="details">
+          <div><dt>データ提供元</dt><dd><a href="https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html" target="_blank" rel="noopener noreferrer">内閣府ホームページ「国民の祝日について」（別ウィンドウ）</a></dd></div>
+          <div><dt>データ内容の最終変更（日本時間）</dt><dd id="updated">—</dd></div>
+          <div><dt>スキーマバージョン</dt><dd id="schema">—</dd></div>
+          <div><dt>データバージョン（SHA-256）</dt><dd><code id="version">—</code></dd></div>
+        </dl>
+        <a class="manifest-link" href="manifest.json">manifest.json を開く</a>
+      </aside>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>出典：<a href="https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv" target="_blank" rel="noopener noreferrer">内閣府ホームページ「国民の祝日について」掲載CSV（別ウィンドウ）</a>。gomadaifukuが公式CSVを年別JSONに加工しました。本サービスは内閣府が運営する公式サービスではありません。</p>
+      <p>祝日データの利用条件：<a href="https://www.digital.go.jp/resources/open_data/public_data_license_v1.0">公共データ利用規約（第1.0版）</a>。プログラムのライセンスは<a href="https://github.com/gomadaifuku/japan-holiday-data/blob/main/LICENSE">MIT</a>です。</p>
+      <p><a href="data-license.json">出典・加工者・利用条件をJSONで取得</a></p>
+    </div>
+  </footer>
+</body>
+</html>

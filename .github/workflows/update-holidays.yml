@@ -1,0 +1,231 @@
+name: Update holiday data
+on:
+  schedule:
+    - cron: '15 21 * * 0'
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      initial:
+        description: '初回公開（公開先 manifest の HTTP 404 を許可）'
+        type: boolean
+        default: false
+      approve_removals:
+        description: '削除を確認した候補データの SHA-256'
+        type: string
+        required: false
+      restore_run_id:
+        description: '復旧専用。公開検証に成功した過去の main の Run ID'
+        type: string
+        required: false
+
+      restore_from_release:
+        description: '保管期限後、管理者が Release に添付した同一 ZIP から復旧'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# 比較に使う公開データの取得から公開確認まで同じグループで直列化する。
+concurrency:
+  group: japan-holiday-data-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: read
+      actions: read
+    outputs:
+      pages_artifact: ${{ steps.artifacts.outputs.pages_artifact }}
+      backup_name: holiday-backup-${{ github.run_attempt }}
+      backup_digest: ${{ steps.backup.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.14'
+      - name: Require source Run ID for release recovery
+        if: inputs.restore_from_release && inputs.restore_run_id == ''
+        run: |
+          echo 'Specify restore_run_id together with restore_from_release'
+          exit 1
+      - name: Test
+        id: tests
+        run: python -m unittest discover -s tests -v
+      - name: Resolve configured Pages URL
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Fetch, compare and generate
+        if: inputs.restore_run_id == ''
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          INITIAL: ${{ inputs.initial }}
+          APPROVAL: ${{ inputs.approve_removals }}
+        shell: bash
+        run: |
+          args=(--base-url "$BASE_URL")
+          if [[ "$INITIAL" == 'true' ]]; then args+=(--initial); fi
+          if [[ -n "$APPROVAL" ]]; then args+=(--approve-removals "$APPROVAL"); fi
+          python -m scripts.update_holidays "${args[@]}"
+      - name: Check recovery run and its public verification
+        id: source
+        if: inputs.restore_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.restore_run_id }}
+          INITIAL: ${{ inputs.initial }}
+          APPROVAL: ${{ inputs.approve_removals }}
+        shell: bash
+        run: |
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$INITIAL" != 'true' && -z "$APPROVAL" ]]
+          endpoint="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          eligible=$(gh api "$endpoint" --jq '
+            .head_branch == "main" and .path == ".github/workflows/update-holidays.yml"
+            and (.event == "schedule" or .event == "workflow_dispatch" or .event == "push")')
+          [[ "$eligible" == 'true' ]] || { echo 'Past run is not a production run'; exit 1; }
+          # 再実行に失敗したRunでも、過去の成功した公開検証で記録したZIPは復旧できる。
+          digest=$(gh api --paginate "$endpoint/jobs?filter=all&per_page=100" | jq -rs '
+            [.[] | .jobs[] | select(.name == "verify" and .conclusion == "success")]
+            | max_by(.run_attempt, .id) | .steps[]?
+            | select(.conclusion == "success") | .name
+            | select(startswith("Verified backup SHA-256 ")) | sub("^Verified backup SHA-256 "; "")')
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || { echo 'Past verification or backup digest is missing'; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          printf 'Restore from verified run %s\n' "$RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retrieve the exact ZIP from the verified attempt
+        if: inputs.restore_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.restore_run_id }}
+          SHA256: ${{ steps.source.outputs.digest }}
+          FROM_RELEASE: ${{ inputs.restore_from_release }}
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/holiday-backup.zip"
+          if [[ "$FROM_RELEASE" == 'true' ]]; then
+            gh release download "pages-backup-$RUN_ID" -R "$GITHUB_REPOSITORY" -p holiday-backup.zip -O "$archive"
+          else
+            # 名前だけではなく、対象Runの検証済みダイジェストに一致するArtifactを選ぶ。
+            endpoint="repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100"
+            id=$(gh api --paginate "$endpoint" | jq -rs --arg digest "sha256:$SHA256" '
+              [.[] | .artifacts[] | select(.expired == false and .digest == $digest)
+               | select(.name == "holiday-backup" or (.name | startswith("holiday-backup-")))
+               | .id] | max // empty')
+            [[ "$id" =~ ^[0-9]+$ ]] || { echo 'Verified backup artifact is missing or expired'; exit 1; }
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$archive"
+          fi
+          printf '%s  %s\n' "$SHA256" "$archive" | sha256sum --check --status
+          python -m zipfile -e "$archive" restored
+      - name: Stage recovered site and source
+        if: inputs.restore_run_id != ''
+        run: |
+          test ! -e public && test ! -e data/raw
+          mkdir -p data
+          mv restored/public public
+          mv restored/data/raw data/raw
+      - name: Verify publication file list and compare JSON against the saved CSV
+        run: python -m scripts.check_backup
+      - name: Preserve source CSV and public files
+        id: backup
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: holiday-backup-${{ github.run_attempt }}
+          path: |
+            public/
+            data/raw/syukujitsu.csv
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - name: Name Pages artifact for this build attempt
+        id: artifacts
+        run: echo "pages_artifact=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Upload only the validated site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: public
+          include-hidden-files: true
+          name: ${{ steps.artifacts.outputs.pages_artifact }}
+      - name: Record build result
+        if: always()
+        env:
+          TESTS: ${{ steps.tests.outcome }}
+          RESULT: ${{ job.status }}
+        run: printf 'Tests = %s\n\nBuild = %s\n' "$TESTS" "$RESULT" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - name: Deploy validated files
+        id: pages
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: ${{ needs.build.outputs.pages_artifact }}
+      - name: Record deployment result
+        if: always()
+        env:
+          RESULT: ${{ steps.pages.outcome }}
+          URL: ${{ steps.pages.outputs.page_url }}
+        run: printf 'Pages deployment = %s\n\n%s\n' "$RESULT" "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.14'
+      - name: Get expected manifest from this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.backup_name }}
+          path: expected
+          digest-mismatch: error
+      - name: Check anonymously served Pages files
+        id: verify
+        env:
+          BASE_URL: ${{ needs.deploy.outputs.page_url }}
+        shell: bash
+        run: |
+          python -m scripts.published --base-url "$BASE_URL" \
+            --expected-manifest expected/public/manifest.json 2>&1 | tee "$RUNNER_TEMP/verify.log"
+      # 復旧時は成功した verify ジョブのこの記録から元の ZIP のハッシュを読み出す。
+      - name: Verified backup SHA-256 ${{ needs.build.outputs.backup_digest }}
+        env:
+          SHA256: ${{ needs.build.outputs.backup_digest }}
+        shell: bash
+        run: |
+          [[ "$SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "Verified backup ZIP SHA-256 = $SHA256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record verification result
+        if: always()
+        env:
+          RESULT: ${{ steps.verify.outcome }}
+        run: |
+          printf 'Public verification = %s\n' "$RESULT" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUNNER_TEMP/verify.log" ]; then
+            echo '<pre>' >> "$GITHUB_STEP_SUMMARY"
+            python -c 'import html, pathlib, os; print(html.escape((pathlib.Path(os.environ["RUNNER_TEMP"]) / "verify.log").read_text()[-12000:]))' >> "$GITHUB_STEP_SUMMARY"
+            echo '</pre>' >> "$GITHUB_STEP_SUMMARY"
+          fi

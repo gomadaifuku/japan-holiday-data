@@ -1,0 +1,13 @@
+{
+  "source": "内閣府「国民の祝日について」",
+  "sourceUrl": "https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv",
+  "sourcePageUrl": "https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html",
+  "termsUrl": "https://www.cao.go.jp/notice/rule.html",
+  "dataLicense": "公共データ利用規約（第1.0版）",
+  "dataLicenseUrl": "https://www.digital.go.jp/resources/open_data/public_data_license_v1.0",
+  "modifiedBy": "gomadaifuku",
+  "modification": "公式CSVの日付表記を統一し、年別のJSONに加工しました。",
+  "notice": "本サービスは内閣府が運営する公式サービスではありません。",
+  "softwareLicense": "MIT",
+  "softwareLicenseUrl": "https://github.com/gomadaifuku/japan-holiday-data/blob/main/LICENSE"
+}

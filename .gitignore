@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local downloads, validated Pages output and temporary builds
+/data/raw/
+/public/
+/.holiday-build-*/
+/.holiday-update.lock

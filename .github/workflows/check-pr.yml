@@ -1,0 +1,36 @@
+name: Check holiday data
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.14'
+      - name: Run unit tests
+        id: tests
+        run: python -m unittest discover -s tests -v
+      - name: Fetch the official CSV and validate the preview on this runner
+        id: live
+        run: python -m scripts.update_holidays --preview
+      - name: Compare all generated dates and names with the original CSV
+        run: python -m scripts.check_official
+      - name: Check the publication file list, attribution and saved CSV
+        run: python -m scripts.check_backup
+      - name: Record check results
+        if: always()
+        env:
+          TESTS: ${{ steps.tests.outcome }}
+          LIVE: ${{ steps.live.outcome }}
+        run: printf 'Unit tests = %s\n\nOfficial CSV build = %s\n' "$TESTS" "$LIVE" >> "$GITHUB_STEP_SUMMARY"
